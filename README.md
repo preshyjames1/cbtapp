@@ -1,70 +1,119 @@
-# Getting Started with Create React App
+### Online CBT Platform
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+This project is a comprehensive online platform for creating, managing, and taking computer-based tests (CBT). The application is built with React and uses Firebase as a backend for real-time data storage, authentication, and user management.
 
-## Available Scripts
+The platform is designed to support three distinct user roles: **Admin**, **Teacher**, and **Student**, each with specific functionalities.
 
-In the project directory, you can run:
+-----
 
-### `npm start`
+### Key Features
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+**For Students:**
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+  * **Student Dashboard:** View a list of available exams for their registered class.
+  * **Exam Taking:** Take timed exams with features like question shuffling, option shuffling, and a live timer.
+  * **Results Viewing:** See their score and performance on completed exams.
 
-### `npm test`
+**For Teachers:**
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+  * **Exam Creation:** Easily create new exams with different question types (multiple-choice, true/false, short answer).
+  * **Question Management:** Manually add questions, bulk upload from a CSV file, or select questions from a centralized question bank.
+  * **Exam Status Control:** Manage the lifecycle of exams, including setting them as a `Draft` or submitting them for `Review` by an admin.
+  * **View Results:** Access a detailed view of student submissions for their exams.
 
-### `npm run build`
+**For Admins:**
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+  * **User Management:** Create, edit, and delete user accounts and assign roles (Student, Teacher, Admin).
+  * **Full Exam Control:** Publish or withdraw any exam on the platform.
+  * **System-wide Reports:** Access analytics and reports on overall performance, total exams, and submissions.
+  * **Notifications:** Receive real-time notifications for important events, such as when a teacher submits an exam for review.
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+-----
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+### Technology Stack
 
-### `npm run eject`
+  * **Frontend:** React, React Router
+  * **State Management:** React Context API for authentication
+  * **Styling:** Tailwind CSS, PostCSS
+  * **Backend:** Firebase (Authentication and Firestore Database)
+  * **Icons:** Lucide React
+  * **Charting:** Recharts
+  * **Build Tool:** Create React App
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+-----
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+### Getting Started
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+To get a local copy up and running, follow these steps.
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+#### Prerequisites
 
-## Learn More
+  * Node.js (version 14 or later)
+  * npm or Yarn
+  * A Firebase project with Firestore and Authentication enabled. You will need to add your Firebase config to the project.
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+#### Installation
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+1.  Clone the repository:
 
-### Code Splitting
+    ```bash
+    git clone https://github.com/preshyjames1/cbtapp.git
+    cd cbtapp
+    ```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+2.  Install NPM packages:
 
-### Analyzing the Bundle Size
+    ```bash
+    npm install
+    # or
+    yarn install
+    ```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+3.  Configure Firebase:
 
-### Making a Progressive Web App
+      * In the Firebase console, create a new project.
+      * Enable **Firestore Database** and **Authentication** (using email/password provider).
+      * Copy your Firebase project configuration and paste it into `src/services/firebase.js`, replacing the placeholder config.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+4.  Run the application:
 
-### Advanced Configuration
+    ```bash
+    npm start
+    # or
+    yarn start
+    ```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+The application will be available at `http://localhost:3000`.
 
-### Deployment
+-----
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+### File Structure
 
-### `npm run build` fails to minify
+The project follows a standard Create React App structure with a few key additions:
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+```
+src/
+├── components/          # Reusable components (e.g., Modals, Spinner)
+│   ├── common/
+│   └── exam/
+├── context/             # React Contexts for global state (e.g., AuthContext)
+├── pages/               # Main application pages for each route/view
+│   ├── AdminDashboard.js
+│   ├── AuthComponent.js
+│   ├── CreateExam.js
+│   ├── EditExam.js
+│   ├── ExamManagement.js
+│   ├── ExamInstructions.js
+│   ├── QuestionBank.js
+│   ├── Reports.js
+│   ├── StudentDashboard.js
+│   ├── TakeExam.js
+│   ├── TeacherDashboard.js
+│   ├── UserManagement.js
+│   └── ViewResults.js
+├── services/            # Firebase SDK initialization and utility functions
+│   └── firebase.js
+├── App.js               # Main App component that handles routing and layout
+├── index.js             # Entry point
+└── ...
+```
