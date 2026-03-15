@@ -1,0 +1,106 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function hasRole(role) {
+      return isSignedIn() && getUserData().role == role;
+    }
+
+    function isAdminOrTeacher() {
+      return isSignedIn() && getUserData().role in ['admin', 'teacher'];
+    }
+
+    function isAdmin() {
+      return hasRole('admin');
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // ── /users ─────────────────────────────────────────────────────────────────
+    // - Any signed-in user can read their own profile
+    // - Admins can read all profiles
+    // - Only admins can create / update / delete user documents
+    //   (user creation by admin via secondary auth is done server-side;
+    //    self-registration writes are permitted on create only for the owner)
+    match /users/{userId} {
+      allow read:   if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId); // self-registration
+      allow update: if isOwner(userId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ── /exams ─────────────────────────────────────────────────────────────────
+    // - Any signed-in user can READ an exam document (needed to start the exam).
+    //   Correct answers are embedded in the document — see note below.*
+    // - Only admins and teachers can create / edit / delete exams.
+    // - A teacher can only edit their own exams (teacherId must match).
+    //
+    // *NOTE: To fully hide correct answers from students you would need to move
+    // them to a separate server-only sub-collection and grade via Cloud Functions.
+    // That is the recommended next step for production.
+    match /exams/{examId} {
+      allow read:   if isSignedIn();
+      allow create: if isAdminOrTeacher();
+      allow update: if isAdmin()
+                    || (hasRole('teacher') && resource.data.teacherId == request.auth.uid);
+      allow delete: if isAdmin()
+                    || (hasRole('teacher') && resource.data.teacherId == request.auth.uid);
+    }
+
+    // ── /submissions ───────────────────────────────────────────────────────────
+    // - A student can only create a submission for themselves.
+    // - A student can read only their own submissions.
+    // - Admins and teachers can read all submissions.
+    // - Nobody can update or delete a submission (immutable record).
+    match /submissions/{submissionId} {
+      allow read:   if isOwner(resource.data.studentId) || isAdminOrTeacher();
+      allow create: if isSignedIn()
+                    && request.resource.data.studentId == request.auth.uid
+                    && !exists(/databases/$(database)/documents/submissions/$(submissionId));
+      allow update, delete: if false; // submissions are immutable
+    }
+
+    // ── /exam_sessions ─────────────────────────────────────────────────────────
+    // - Only the owning student can read / write their session.
+    // - Sessions are deleted / marked complete after submission.
+    match /exam_sessions/{sessionId} {
+      allow read, write: if isOwner(resource.data.studentId);
+      allow create:      if isSignedIn()
+                         && request.resource.data.studentId == request.auth.uid;
+    }
+
+    // ── /notifications ─────────────────────────────────────────────────────────
+    // - Only admins can read notifications.
+    // - Teachers can create notifications (to notify admin of submission).
+    // - Only admins can update (mark as read) or delete.
+    match /notifications/{notifId} {
+      allow read:          if isAdmin();
+      allow create:        if isAdminOrTeacher();
+      allow update, delete: if isAdmin();
+    }
+
+    // ── /question_bank ─────────────────────────────────────────────────────────
+    // - Any signed-in teacher or admin can read the question bank.
+    // - Only admins and teachers can write to it.
+    match /question_bank/{questionId} {
+      allow read:           if isAdminOrTeacher();
+      allow write:          if isAdminOrTeacher();
+    }
+
+    // ── Deny everything else ───────────────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

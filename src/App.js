@@ -143,7 +143,7 @@ function AppLayout() {
       case 'view-results':
         return <ViewResults exam={selectedExam} setPage={setPage} />;
       case 'dashboard':
-        if (currentUser.role === 'admin') return <AdminDashboard />;
+        if (currentUser.role === 'admin') return <AdminDashboard setPage={setPage} />;
         if (currentUser.role === 'teacher') return <TeacherDashboard setPage={setPage} setSelectedExam={setSelectedExam} />;
         return <StudentDashboard setPage={setPage} setSelectedExam={setSelectedExam} />;
       case 'exam-management':
@@ -171,7 +171,7 @@ function AppLayout() {
           <div className="text-2xl font-bold text-blue-600">Exam Platform</div>
           <div className="flex items-center space-x-4">
             <span className="text-gray-700 hidden sm:block">
-              Welcome, <span className="font-semibold">{currentUser.email}</span> (<span className="capitalize">{currentUser.role}</span>)
+              Welcome, <span className="font-semibold">{currentUser.name || currentUser.email}</span> (<span className="capitalize">{currentUser.role}</span>)
             </span>
             
             {currentUser.role === 'admin' && (
