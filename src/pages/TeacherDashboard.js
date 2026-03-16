@@ -62,7 +62,7 @@ const TeacherDashboard = ({setPage, setSelectedExam }) => {
             const notificationsColRef = collection(db, "notifications");
             await addDoc(notificationsColRef, {
                 type: 'EXAM_SUBMITTED',
-                message: `${currentUser.email} has submitted the exam "${exam.title}" for review.`,
+                message: `${currentUser.name || currentUser.email} has submitted the exam "${exam.title}" for review.`,
                 examId: exam.id,
                 timestamp: new Date(),
                 read: false // We'll use this to track if the admin has seen it

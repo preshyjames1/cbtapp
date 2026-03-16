@@ -100,31 +100,54 @@ const StudentDashboard = ({ setPage, setSelectedExam }) => {
         return aHasBeenTaken ? 1 : -1;
     });
 
+    // Returns null if open, or a string reason why the exam can't be started yet / is over
+    const getExamWindowStatus = (exam) => {
+        if (!exam.startDateTime) return null; // no window set — always open
+        const start = exam.startDateTime.toDate();
+        const end   = new Date(start.getTime() + exam.duration * 60 * 1000 + 30 * 60 * 1000); // 30 min grace after duration
+        const now   = new Date();
+        if (now < start) return `Opens ${start.toLocaleString()}`;
+        if (now > end)   return 'This exam window has closed';
+        return null;
+    };
+
     return (
         <div>
             <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center"><BookOpen className="mr-3" /> Available Exams for {currentUser.className}</h2>
             {loading ? <Spinner /> : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {sortedExams.length > 0 ? sortedExams.map(exam => {
-                        // ... The rest of the component's JSX remains the same
-                        const submission = submissions[exam.id];
-                        const hasTaken = !!submission;
+                        const submission   = submissions[exam.id];
+                        const hasTaken     = !!submission;
+                        const windowStatus = getExamWindowStatus(exam);
+                        const inProgress   = !!activeSessions[exam.id];
                         return (
-                             <div key={exam.id} className={`bg-white p-6 rounded-lg shadow-md ${hasTaken ? 'bg-gray-50' : 'hover:shadow-lg transition-shadow'}`}>
+                             <div key={exam.id} className={`bg-white p-6 rounded-lg shadow-md ${hasTaken ? 'bg-gray-50 opacity-80' : 'hover:shadow-lg transition-shadow'}`}>
                                 <h3 className="text-xl font-bold text-gray-800">{exam.title}</h3>
-                                <p className="text-gray-500 mt-2">{exam.questionsToAnswer || exam.questions?.length || 0} Questions</p>
-                                <p className="text-gray-500">{exam.duration} minutes</p>
+                                <p className="text-gray-500 mt-1 text-sm">{exam.subjectName || ''}</p>
+                                <p className="text-gray-500 mt-1">{exam.questionsToAnswer || exam.questions?.length || 0} Questions · {exam.duration} mins</p>
+                                {exam.startDateTime && (
+                                    <p className="text-xs text-blue-600 mt-1">
+                                        Starts: {exam.startDateTime.toDate().toLocaleString()}
+                                    </p>
+                                )}
                                 {hasTaken ? (
                                     <div className="mt-4">
                                         <p className="font-semibold text-green-600 flex items-center"><CheckCircle className="mr-2"/> Completed</p>
-                                        <p className="text-gray-600">Score: {submission.score} / {submission.totalMarks}</p>
+                                        <p className="text-gray-600 text-sm">Score: {submission.score} / {submission.totalMarks}
+                                            {submission.pct !== undefined && <span className={`ml-2 font-bold ${submission.passed ? 'text-green-600' : 'text-red-500'}`}>({submission.pct}% — {submission.passed ? 'Pass' : 'Fail'})</span>}
+                                        </p>
+                                    </div>
+                                ) : windowStatus ? (
+                                    <div className="mt-4 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-700 font-medium">
+                                        {windowStatus}
                                     </div>
                                 ) : (
-                                    <button 
+                                    <button
                                         onClick={() => handleStartExamClick(exam)}
-                                        className="mt-4 w-full bg-green-600 text-white font-semibold px-4 py-2 rounded-lg hover:bg-green-700 transition duration-300"
+                                        className={`mt-4 w-full text-white font-semibold px-4 py-2 rounded-lg transition duration-300 ${inProgress ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-green-600 hover:bg-green-700'}`}
                                     >
-                                        Start Exam
+                                        {inProgress ? 'Resume Exam' : 'Start Exam'}
                                     </button>
                                 )}
                             </div>

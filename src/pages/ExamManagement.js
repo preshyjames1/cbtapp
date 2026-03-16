@@ -3,6 +3,7 @@ import { db, collection, onSnapshot, query, writeBatch, doc, deleteDoc, where, g
 import { Eye, ShieldCheck, ShieldOff, Pencil, Trash2, Filter, RefreshCw } from 'lucide-react';
 import Spinner from '../components/common/Spinner';
 import Modal from '../components/common/Modal';
+import toast from 'react-hot-toast';
 
 const ExamManagement = ({ setPage, setSelectedExam }) => {
     const [exams, setExams] = useState([]);
@@ -32,7 +33,7 @@ const ExamManagement = ({ setPage, setSelectedExam }) => {
 
     const handlePublishSelected = async () => {
         if (selectedExams.length === 0) {
-            alert("Please select exams to publish.");
+            toast.error("Please select exams to publish.");
             return;
         }
         const batch = writeBatch(db);
@@ -60,7 +61,7 @@ const ExamManagement = ({ setPage, setSelectedExam }) => {
             setSelectedExams([]);
         } catch (error) {
             console.error("Error deleting selected exams:", error);
-            alert("An error occurred while deleting the selected exams.");
+            toast.error("An error occurred while deleting the selected exams.");
         } finally {
             setIsBulkDeleteModalOpen(false);
         }

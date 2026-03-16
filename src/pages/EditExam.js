@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { db, doc, updateDoc, Timestamp } from '../services/firebase';
-import { PlusCircle, UploadCloud, Book } from 'lucide-react';
+import { PlusCircle, UploadCloud, Book, Trash2 } from 'lucide-react';
 import Modal from '../components/common/Modal';
 import Spinner from '../components/common/Spinner';
 import QuestionBankModal from '../components/exam/QuestionBankModal';
+import { CLASS_OPTIONS, SUBJECT_OPTIONS } from '../config/constants';
+import toast from 'react-hot-toast';
 
 const EditExam = ({ setPage, examToEdit }) => {
     // The 'currentUser' is not needed here as we are only editing an exam, not setting the teacherId.
@@ -22,6 +24,7 @@ const EditExam = ({ setPage, examToEdit }) => {
     const [instructions, setInstructions] = useState(examToEdit.instructions || '');
     const [questions, setQuestions] = useState(examToEdit.questions || []);
     const [questionsToAnswer, setQuestionsToAnswer] = useState(examToEdit.questionsToAnswer || 1);
+    const [passMarkPercentage, setPassMarkPercentage] = useState(examToEdit.passMarkPercentage || 50);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
@@ -71,6 +74,21 @@ const EditExam = ({ setPage, examToEdit }) => {
         setQuestions(newQuestions);
     };
 
+    const handleAddOption = (qIndex) => {
+        const newQuestions = [...questions];
+        newQuestions[qIndex].options.push('');
+        setQuestions(newQuestions);
+    };
+
+    const handleRemoveOption = (qIndex, oIndex) => {
+        const newQuestions = [...questions];
+        if (newQuestions[qIndex].options.length <= 2) return;
+        newQuestions[qIndex].options.splice(oIndex, 1);
+        if (newQuestions[qIndex].correctAnswerIndex >= newQuestions[qIndex].options.length) {
+            newQuestions[qIndex].correctAnswerIndex = 0;
+        }
+        setQuestions(newQuestions);
+    };
     const handleSubmit = async (e) => {
         e.preventDefault();
         setLoading(true);
@@ -90,6 +108,7 @@ const EditExam = ({ setPage, examToEdit }) => {
                 title, duration: (durationHr * 60) + durationMin, className, subjectName,
                 startDateTime, useAccessCode, accessCode, shuffleQuestions, shuffleOptions,
                 instructions, questionsToAnswer: Number(questionsToAnswer), questions,
+                passMarkPercentage: Number(passMarkPercentage),
             });
             setPage('dashboard');
         } catch (err) {
@@ -121,7 +140,7 @@ const EditExam = ({ setPage, examToEdit }) => {
                     return null;
                 }).filter(q => q !== null);
                 if (newQuestions.length > 0) setQuestions(prev => [...prev, ...newQuestions]);
-                else alert("Could not parse any valid questions from the file. Please check the format.");
+                else toast.error("Could not parse any valid questions from the file. Please check the format.");
                 setIsUploadModalOpen(false);
             };
             reader.readAsText(file);
@@ -163,9 +182,7 @@ const EditExam = ({ setPage, examToEdit }) => {
                         <label className="block text-sm font-medium text-gray-700 mb-1">CLASSES *</label>
                         <select value={className} onChange={(e) => setClassName(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md bg-white">
                             <option value="">Select Class</option>
-                            <option value="SS1">SS1</option>
-                            <option value="SS2">SS2</option>
-                            <option value="SS3">SS3</option>
+                            {CLASS_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
                     </div>
                     <div className="flex items-end gap-2 lg:col-span-3">
@@ -173,12 +190,9 @@ const EditExam = ({ setPage, examToEdit }) => {
                             <label className="block text-sm font-medium text-gray-700 mb-1">SUBJECTS *</label>
                             <select value={subjectName} onChange={(e) => setSubjectName(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md bg-white">
                                 <option value="">Select Subject</option>
-                                <option value="Mathematics">Mathematics</option>
-                                <option value="English Language">English Language</option>
-                                <option value="Data Processing">Data Processing</option>
+                                {SUBJECT_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                             </select>
                         </div>
-                        <button type="button" className="bg-blue-500 text-white p-2 rounded-md h-10"><PlusCircle size={20}/></button>
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Test Date</label>
@@ -198,6 +212,10 @@ const EditExam = ({ setPage, examToEdit }) => {
                                 {[...Array(60).keys()].map(m => <option key={m} value={m}>{m} Min</option>)}
                             </select>
                         </div>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Pass Mark (%)</label>
+                        <input type="number" value={passMarkPercentage} onChange={(e) => setPassMarkPercentage(e.target.value)} min="1" max="100" className="w-full p-2 border border-gray-300 rounded-md" />
                     </div>
                     <div className="lg:col-span-4 grid grid-cols-1 sm:grid-cols-3 gap-y-2 gap-x-4">
                         <div className="flex items-center">
@@ -264,12 +282,17 @@ const EditExam = ({ setPage, examToEdit }) => {
                         </div>
                          {q.type === 'multiple-choice' && q.options.map((opt, oIndex) => (
                             <div key={oIndex} className="flex items-start space-x-2">
-                                <div className="flex flex-col items-center pt-1">
+                                <div className="flex flex-col items-center pt-1 shrink-0">
                                     <span className="font-bold text-gray-600">{String.fromCharCode(97 + oIndex)})</span>
                                     <input type="radio" name={`correctAnswer_${qIndex}`} checked={q.correctAnswerIndex === oIndex} onChange={() => handleQuestionChange(qIndex, 'correctAnswerIndex', oIndex)} className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"/>
-                                    <label className="text-xs text-gray-500">Is Correct?</label>
+                                    <label className="text-xs text-gray-500">Correct</label>
                                 </div>
                                 <textarea placeholder={`Option ${String.fromCharCode(97 + oIndex)}`} value={opt} onChange={(e) => handleOptionChange(qIndex, oIndex, e.target.value)} className="w-full p-2 border border-gray-300 rounded-md" required />
+                                {q.options.length > 2 && (
+                                    <button type="button" onClick={() => handleRemoveOption(qIndex, oIndex)} className="mt-1 text-red-400 hover:text-red-600 shrink-0" title="Remove option">
+                                        <Trash2 size={16} />
+                                    </button>
+                                )}
                             </div>
                         ))}
                         {q.type === 'true-false' && (
@@ -288,7 +311,11 @@ const EditExam = ({ setPage, examToEdit }) => {
                             </div>
                         )}
                         <div className="flex justify-between items-center pt-4">
-                            {q.type === 'multiple-choice' && <button type="button" onClick={() => {}} className="text-blue-600 font-semibold">+ Add Option</button>}
+                            {q.type === 'multiple-choice' && (
+                                <button type="button" onClick={() => handleAddOption(qIndex)} className="text-blue-600 font-semibold text-sm hover:underline flex items-center gap-1">
+                                    <PlusCircle size={15} /> Add Option
+                                </button>
+                            )}
                             <div className="ml-auto">
                                 <label className="text-sm font-medium text-gray-700 mr-2">Marks</label>
                                 <input type="number" value={q.marks} onChange={(e) => handleQuestionChange(qIndex, 'marks', e.target.value)} className="p-1 border border-gray-300 rounded-md w-20" />
