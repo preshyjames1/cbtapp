@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db, collection, onSnapshot, query, doc, updateDoc, deleteDoc, secondaryAuth } from '../services/firebase';
-import { createUserWithEmailAndPassword, signOut, updateEmail, updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
+import { createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 import { setDoc } from 'firebase/firestore';
 import Spinner from '../components/common/Spinner';
 import Modal from '../components/common/Modal';
@@ -193,25 +193,14 @@ const UserManagement = () => {
             if (editEmail.trim() !== selectedUser.email) updates.email = editEmail.trim();
             await updateDoc(doc(db, 'users', selectedUser.id), updates);
 
-            // Update Firebase Auth email via secondary app (re-sign in the user)
-            if (editEmail.trim() !== selectedUser.email || editPassword.trim()) {
-                try {
-                    // Sign the user into secondary app to update their Auth record
-                    const { signInWithEmailAndPassword: signIn } = await import('firebase/auth');
-                    const cred = await signIn(secondaryAuth, selectedUser.email, '');
-                    // This won't work without the current password — show clear guidance
-                    toast('Email/password changes require the user to log in and change themselves, or use Firebase Console.', { icon: 'ℹ️', duration: 5000 });
-                } catch (_) {
-                    // Expected to fail without the user's password — that's fine
-                    // We already updated Firestore above
-                }
+            // Note: Changing a user's Firebase Auth email/password requires either
+            // their current password or a Cloud Function with admin SDK.
+            // Admins can use Firebase Console → Authentication → find user → Reset Password.
+            if (editEmail.trim() !== selectedUser.email) {
+                toast('Profile email updated. To also change their login email, use Firebase Console → Authentication.', { icon: 'ℹ️', duration: 5000 });
             }
-
-            // If only password change requested — inform admin
             if (editPassword.trim() && editPassword.length >= 6) {
-                // Use secondaryAuth to create a temp session for this user — not possible without their password
-                // Instruct admin to use Firebase Console or a Cloud Function
-                toast('To reset a password, use Firebase Console → Authentication → find the user → Reset Password email.', { icon: '🔑', duration: 6000 });
+                toast('To reset a password, use Firebase Console → Authentication → find user → Send Password Reset Email.', { icon: '🔑', duration: 6000 });
             }
 
             toast.success('Profile updated successfully.');
