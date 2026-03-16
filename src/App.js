@@ -168,7 +168,7 @@ function AppLayout() {
       <Toaster position="top-center" reverseOrder={false} />
       <header className="bg-white shadow-md">
         <nav className="container mx-auto px-6 py-4 flex justify-between items-center">
-          <div className="text-2xl font-bold text-blue-600">Exam Platform</div>
+          <div className="text-2xl font-bold text-blue-600">Exam Platform by P</div>
           <div className="flex items-center space-x-4">
             <span className="text-gray-700 hidden sm:block">
               Welcome, <span className="font-semibold">{currentUser.name || currentUser.email}</span> (<span className="capitalize">{currentUser.role}</span>)
