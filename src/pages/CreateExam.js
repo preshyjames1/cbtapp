@@ -15,12 +15,17 @@ const CreateExam = ({ setPage }) => {
     const [subjectName, setSubjectName] = useState('');
     const [testDate, setTestDate] = useState('');
     const [testTime, setTestTime] = useState('09:00');
+    const [windowEndDate, setWindowEndDate] = useState('');
+    const [windowEndTime, setWindowEndTime] = useState('23:59');
     const [durationHr, setDurationHr] = useState(0);
     const [durationMin, setDurationMin] = useState(30);
     const [useAccessCode, setUseAccessCode] = useState(false);
     const [accessCode, setAccessCode] = useState('');
     const [shuffleQuestions, setShuffleQuestions] = useState(false);
     const [shuffleOptions, setShuffleOptions] = useState(false);
+    const [showScoreImmediately, setShowScoreImmediately] = useState(true);
+    const [allowTabSwitch, setAllowTabSwitch] = useState(false);
+    const [maxTabSwitches, setMaxTabSwitches] = useState(3);
     const [instructions, setInstructions] = useState('');
     const [questions, setQuestions] = useState([]);
     const [questionsToAnswer, setQuestionsToAnswer] = useState(1);
@@ -103,17 +108,21 @@ const CreateExam = ({ setPage }) => {
             return;
         }
 
-        const startDateTime = testDate && testTime ? Timestamp.fromDate(new Date(`${testDate}T${testTime}`)) : null;
+        const windowStart = testDate && testTime ? Timestamp.fromDate(new Date(`${testDate}T${testTime}`)) : null;
+        const windowEnd   = windowEndDate && windowEndTime ? Timestamp.fromDate(new Date(`${windowEndDate}T${windowEndTime}`)) : null;
 
         try {
             await addDoc(collection(db, "exams"), {
                 title, duration: (durationHr * 60) + durationMin, className, subjectName,
-                startDateTime, useAccessCode, accessCode, shuffleQuestions, shuffleOptions,
+                startDateTime: windowStart, // keep for backwards compat
+                windowStart, windowEnd,
+                useAccessCode, accessCode, shuffleQuestions, shuffleOptions,
+                showScoreImmediately, allowTabSwitch, maxTabSwitches: Number(maxTabSwitches),
                 instructions, questionsToAnswer: Number(questionsToAnswer), questions,
                 passMarkPercentage: Number(passMarkPercentage),
                 status: 'Draft', teacherId: currentUser.uid, createdAt: new Date(),
             });
-            setPage('dashboard');
+            setPage('exam-management');
         } catch (err) {
             setError('Failed to create exam. Please try again.');
             console.error(err);
@@ -199,12 +208,20 @@ const CreateExam = ({ setPage }) => {
                         <button type="button" className="bg-blue-500 text-white p-2 rounded-md h-10"><PlusCircle size={20}/></button>
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Test Date</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Window Start Date</label>
                         <input type="date" value={testDate} onChange={(e) => setTestDate(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md" />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Start Time</label>
                         <input type="time" value={testTime} onChange={(e) => setTestTime(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md" />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Window End Date</label>
+                        <input type="date" value={windowEndDate} onChange={(e) => setWindowEndDate(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md" />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">End Time</label>
+                        <input type="time" value={windowEndTime} onChange={(e) => setWindowEndTime(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md" />
                     </div>
                     <div className="lg:col-span-2">
                         <label className="block text-sm font-medium text-gray-700 mb-1">Duration</label>
@@ -234,7 +251,22 @@ const CreateExam = ({ setPage }) => {
                             <input type="checkbox" id="useAccessCode" checked={useAccessCode} onChange={(e) => setUseAccessCode(e.target.checked)} className="h-4 w-4 text-blue-600 border-gray-300 rounded" />
                             <label htmlFor="useAccessCode" className="ml-2 block text-sm text-gray-900">Use Access Code</label>
                         </div>
+                        <div className="flex items-center">
+                            <input type="checkbox" id="showScoreImmediately" checked={showScoreImmediately} onChange={(e) => setShowScoreImmediately(e.target.checked)} className="h-4 w-4 text-blue-600 border-gray-300 rounded" />
+                            <label htmlFor="showScoreImmediately" className="ml-2 block text-sm text-gray-900">Show Score Immediately</label>
+                        </div>
+                        <div className="flex items-center">
+                            <input type="checkbox" id="allowTabSwitch" checked={allowTabSwitch} onChange={(e) => setAllowTabSwitch(e.target.checked)} className="h-4 w-4 text-blue-600 border-gray-300 rounded" />
+                            <label htmlFor="allowTabSwitch" className="ml-2 block text-sm text-gray-900">Allow Tab Switching</label>
+                        </div>
                     </div>
+                    {!allowTabSwitch && (
+                        <div className="lg:col-span-4 flex items-center gap-3">
+                            <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Auto-submit after</label>
+                            <input type="number" value={maxTabSwitches} min={1} max={10} onChange={e => setMaxTabSwitches(e.target.value)} className="w-20 p-2 border border-gray-300 rounded-md" />
+                            <label className="text-sm text-gray-500">tab switch violation(s)</label>
+                        </div>
+                    )}
                     {useAccessCode && (
                          <div className="lg:col-span-4">
                             <label className="block text-sm font-medium text-gray-700 mb-1">Access Code</label>
@@ -336,7 +368,7 @@ const CreateExam = ({ setPage }) => {
                     <button type="submit" disabled={loading} className="bg-red-500 text-white font-semibold px-6 py-2 rounded-md hover:bg-red-600 transition duration-300 disabled:bg-red-300">
                         {loading ? <Spinner /> : 'Save'}
                     </button>
-                    <button type="button" onClick={() => setPage('dashboard')} className="bg-gray-200 text-gray-700 font-semibold px-6 py-2 rounded-md hover:bg-gray-300">
+                    <button type="button" onClick={() => setPage('exam-management')} className="bg-gray-200 text-gray-700 font-semibold px-6 py-2 rounded-md hover:bg-gray-300">
                         Cancel
                     </button>
                 </div>

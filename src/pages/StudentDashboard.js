@@ -100,14 +100,32 @@ const StudentDashboard = ({ setPage, setSelectedExam }) => {
         return aHasBeenTaken ? 1 : -1;
     });
 
-    // Returns null if open, or a string reason why the exam can't be started yet / is over
+    // Returns null if exam is open, or a string reason if not
     const getExamWindowStatus = (exam) => {
-        if (!exam.startDateTime) return null; // no window set — always open
-        const start = exam.startDateTime.toDate();
-        const end   = new Date(start.getTime() + exam.duration * 60 * 1000 + 30 * 60 * 1000); // 30 min grace after duration
+        // Support both old startDateTime and new windowStart/windowEnd fields
+        const start = exam.windowStart?.toDate?.() || exam.startDateTime?.toDate?.() || null;
+        const end   = exam.windowEnd?.toDate?.()   || null;
         const now   = new Date();
-        if (now < start) return `Opens ${start.toLocaleString()}`;
-        if (now > end)   return 'This exam window has closed';
+
+        if (!start && !end) return null; // no window — always open
+
+        if (start && now < start) {
+            return `Opens ${start.toLocaleString()}`;
+        }
+        if (end && now > end) {
+            return 'This exam window has closed';
+        }
+        return null; // within window — student gets their full duration
+    };
+
+    const getWindowLabel = (exam) => {
+        const start = exam.windowStart?.toDate?.() || exam.startDateTime?.toDate?.() || null;
+        const end   = exam.windowEnd?.toDate?.() || null;
+        if (!start && !end) return null;
+        const fmt = (d) => d.toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+        if (start && end) return `Window: ${fmt(start)} – ${fmt(end)}`;
+        if (start) return `Opens: ${fmt(start)}`;
+        if (end)   return `Closes: ${fmt(end)}`;
         return null;
     };
 
@@ -128,7 +146,7 @@ const StudentDashboard = ({ setPage, setSelectedExam }) => {
                                 <p className="text-gray-500 mt-1">{exam.questionsToAnswer || exam.questions?.length || 0} Questions · {exam.duration} mins</p>
                                 {exam.startDateTime && (
                                     <p className="text-xs text-blue-600 mt-1">
-                                        Starts: {exam.startDateTime.toDate().toLocaleString()}
+                                        {getWindowLabel(exam) || `Starts: ${(exam.windowStart?.toDate?.() || exam.startDateTime?.toDate?.()).toLocaleString()}`}
                                     </p>
                                 )}
                                 {hasTaken ? (

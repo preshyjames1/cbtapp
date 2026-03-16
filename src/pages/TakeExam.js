@@ -1,11 +1,9 @@
 import { useAuth } from '../context/AuthContext';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { db, addDoc, collection, doc, setDoc, updateDoc, query, where, getDocs } from '../services/firebase';
-import { CheckCircle, XCircle, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { CheckCircle, XCircle, AlertTriangle, ChevronLeft, ChevronRight, Clock } from 'lucide-react';
 import Spinner from '../components/common/Spinner';
 import Modal from '../components/common/Modal';
-
-const MAX_TAB_SWITCHES = 3; // auto-submit after this many violations
 
 const TakeExam = ({ exam, setPage }) => {
     const { currentUser } = useAuth();
@@ -21,20 +19,31 @@ const TakeExam = ({ exam, setPage }) => {
     const [isFinished,        setIsFinished]        = useState(false);
     const [isSubmitting,      setIsSubmitting]       = useState(false);
     const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false);
-    const [result,            setResult]            = useState(null); // filled after submit
+    const [result,            setResult]            = useState(null);
 
     // ── Anti-cheat state ──────────────────────────────────────────────────────
-    const [tabSwitchCount,    setTabSwitchCount]    = useState(0);
-    const [showWarning,       setShowWarning]       = useState(false);
-    const [warningMessage,    setWarningMessage]    = useState('');
-    const submitRef = useRef(null); // stable ref so visibility handler can call it
+    const maxTabSwitches   = exam.maxTabSwitches   ?? 3;
+    const allowTabSwitch   = exam.allowTabSwitch   ?? false;
+    const [tabSwitchCount, setTabSwitchCount] = useState(0);
+    const [showWarning,    setShowWarning]    = useState(false);
+    const [warningMessage, setWarningMessage] = useState('');
+
+    // Stable refs
+    const submitRef     = useRef(null);
+    const answersRef    = useRef(answers);
+    const timeLeftRef   = useRef(timeLeft);
+    const tabCountRef   = useRef(tabSwitchCount);
+    const sessionIdRef  = useRef(sessionId);
+
+    useEffect(() => { answersRef.current  = answers;       }, [answers]);
+    useEffect(() => { timeLeftRef.current = timeLeft;      }, [timeLeft]);
+    useEffect(() => { tabCountRef.current = tabSwitchCount;}, [tabSwitchCount]);
+    useEffect(() => { sessionIdRef.current = sessionId;    }, [sessionId]);
 
     // ── 1. Build / restore shuffled exam & session ────────────────────────────
     useEffect(() => {
         if (!exam || !currentUser) return;
-
         const init = async () => {
-            // Check for an existing in-progress session
             const sessQ = query(
                 collection(db, 'exam_sessions'),
                 where('examId',    '==', exam.id),
@@ -44,17 +53,24 @@ const TakeExam = ({ exam, setPage }) => {
             const sessSnap = await getDocs(sessQ);
 
             if (!sessSnap.empty) {
-                // Restore saved session
                 const sesData = sessSnap.docs[0].data();
+                // Check if saved time has elapsed since last save
+                const savedAt   = sesData.savedAt?.toDate?.() || new Date();
+                const elapsed   = Math.floor((Date.now() - savedAt.getTime()) / 1000);
+                const remaining = Math.max(0, (sesData.timeLeft || 0) - elapsed);
+
                 setSessionId(sessSnap.docs[0].id);
                 setShuffledExam({ ...exam, questions: sesData.questions });
                 setAnswers(sesData.answers);
-                setTimeLeft(sesData.timeLeft);
+                setTimeLeft(remaining);
                 setTabSwitchCount(sesData.tabSwitchCount || 0);
-            } else {
-                // Fresh session — shuffle and slice
-                let qs = [...exam.questions];
 
+                // If time ran out while they were away, submit immediately
+                if (remaining === 0) {
+                    setTimeout(() => submitRef.current?.(sesData.answers), 500);
+                }
+            } else {
+                let qs = [...exam.questions];
                 if (exam.shuffleQuestions) {
                     for (let i = qs.length - 1; i > 0; i--) {
                         const j = Math.floor(Math.random() * (i + 1));
@@ -67,26 +83,19 @@ const TakeExam = ({ exam, setPage }) => {
                 if (exam.shuffleOptions) {
                     qs = qs.map(q => {
                         if (q.type !== 'multiple-choice') return q;
-                        const correctText    = q.options[q.correctAnswerIndex];
-                        const shuffled       = [...q.options].sort(() => Math.random() - 0.5);
+                        const correctText = q.options[q.correctAnswerIndex];
+                        const shuffled    = [...q.options].sort(() => Math.random() - 0.5);
                         return { ...q, options: shuffled, correctAnswerIndex: shuffled.indexOf(correctText) };
                     });
                 }
-
                 const freshAnswers = Array(qs.length).fill(null);
                 const newExam      = { ...exam, questions: qs };
-
-                // Persist session
-                const sesRef = doc(collection(db, 'exam_sessions'));
+                const sesRef       = doc(collection(db, 'exam_sessions'));
                 await setDoc(sesRef, {
-                    examId:        exam.id,
-                    studentId:     currentUser.uid,
-                    questions:     qs,
-                    answers:       freshAnswers,
-                    timeLeft:      exam.duration * 60,
-                    tabSwitchCount: 0,
-                    completed:     false,
-                    startedAt:     new Date(),
+                    examId: exam.id, studentId: currentUser.uid,
+                    questions: qs, answers: freshAnswers,
+                    timeLeft: exam.duration * 60, tabSwitchCount: 0,
+                    completed: false, startedAt: new Date(), savedAt: new Date(),
                 });
                 setSessionId(sesRef.id);
                 setShuffledExam(newExam);
@@ -96,22 +105,60 @@ const TakeExam = ({ exam, setPage }) => {
         init();
     }, [exam, currentUser]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // ── 2. Persist answers + time every 15 s ──────────────────────────────────
+    // ── 2. Immediate save on tab hide (key fix for session persistence) ────────
+    useEffect(() => {
+        const saveNow = async () => {
+            const sid = sessionIdRef.current;
+            if (!sid || isFinished) return;
+            try {
+                await updateDoc(doc(db, 'exam_sessions', sid), {
+                    answers:       answersRef.current,
+                    timeLeft:      timeLeftRef.current,
+                    tabSwitchCount: tabCountRef.current,
+                    savedAt:       new Date(), // timestamp so we can deduct elapsed on restore
+                });
+            } catch (_) {}
+        };
+
+        // Save immediately when tab becomes hidden
+        const handleVisibility = () => { if (document.hidden) saveNow(); };
+        // Save on page unload (best effort)
+        const handleUnload = () => {
+            const sid = sessionIdRef.current;
+            if (!sid) return;
+            // Use sendBeacon for reliable unload saves
+            const payload = JSON.stringify({
+                answers: answersRef.current,
+                timeLeft: timeLeftRef.current,
+                tabSwitchCount: tabCountRef.current,
+                savedAt: new Date().toISOString(),
+            });
+            navigator.sendBeacon?.(`/api/noop`, payload); // best-effort; Firestore update below
+            saveNow();
+        };
+
+        document.addEventListener('visibilitychange', handleVisibility);
+        window.addEventListener('beforeunload', handleUnload);
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibility);
+            window.removeEventListener('beforeunload', handleUnload);
+        };
+    }, [isFinished]);
+
+    // ── 3. Periodic save every 10 s ──────────────────────────────────────────
     useEffect(() => {
         if (!sessionId || isFinished) return;
         const interval = setInterval(async () => {
             try {
                 await updateDoc(doc(db, 'exam_sessions', sessionId), {
-                    answers,
-                    timeLeft,
-                    tabSwitchCount,
+                    answers, timeLeft, tabSwitchCount, savedAt: new Date(),
                 });
             } catch (_) {}
-        }, 15000);
+        }, 10000);
         return () => clearInterval(interval);
     }, [sessionId, answers, timeLeft, tabSwitchCount, isFinished]);
 
-    // ── 3. Submit handler ─────────────────────────────────────────────────────
+    // ── 4. Submit handler ─────────────────────────────────────────────────────
     const handleSubmit = useCallback(async (forcedAnswers) => {
         if (isSubmitting || !shuffledExam) return;
         setIsSubmitting(true);
@@ -131,9 +178,11 @@ const TakeExam = ({ exam, setPage }) => {
                                                                given.trim().toLowerCase() ===
                                                                (q.correctAnswer || '').trim().toLowerCase();
             if (isCorrect) score += (q.marks || 1);
-            return { question: q.text, type: q.type, marks: q.marks || 1, given, isCorrect,
-                     correctAnswer: q.type === 'multiple-choice' ? q.options[q.correctAnswerIndex] : q.correctAnswer,
-                     givenText:     q.type === 'multiple-choice' && given !== null ? q.options[given] : given };
+            return {
+                question: q.text, type: q.type, marks: q.marks || 1, given, isCorrect,
+                correctAnswer: q.type === 'multiple-choice' ? q.options[q.correctAnswerIndex] : q.correctAnswer,
+                givenText: q.type === 'multiple-choice' && given !== null ? q.options[given] : given,
+            };
         });
 
         const pct    = totalMarks > 0 ? Math.round((score / totalMarks) * 100) : 0;
@@ -141,57 +190,46 @@ const TakeExam = ({ exam, setPage }) => {
 
         try {
             await addDoc(collection(db, 'submissions'), {
-                examId:       exam.id,
-                studentId:    currentUser.uid,
-                studentEmail: currentUser.email,
-                studentName:  currentUser.name || currentUser.email,
-                answers:      finalAnswers,
-                score,
-                totalMarks,
-                pct,
-                passed,
-                tabSwitchCount,
-                submittedAt:  new Date(),
+                examId: exam.id, studentId: currentUser.uid,
+                studentEmail: currentUser.email, studentName: currentUser.name || currentUser.email,
+                answers: finalAnswers, score, totalMarks, pct, passed,
+                tabSwitchCount, submittedAt: new Date(),
             });
-            // Mark session as complete
             if (sessionId) {
                 await updateDoc(doc(db, 'exam_sessions', sessionId), { completed: true });
             }
-        } catch (err) {
-            console.error('Error submitting exam:', err);
-        }
+        } catch (err) { console.error('Error submitting exam:', err); }
 
         setResult({ score, totalMarks, pct, passed, breakdown });
     }, [answers, exam, currentUser, isSubmitting, sessionId, shuffledExam, tabSwitchCount]);
 
-    // Keep a stable ref so the visibility handler always calls the latest version
     useEffect(() => { submitRef.current = handleSubmit; }, [handleSubmit]);
 
-    // ── 4. Countdown timer ────────────────────────────────────────────────────
+    // ── 5. Countdown timer ────────────────────────────────────────────────────
     useEffect(() => {
         if (isFinished || !shuffledExam) return;
         const timer = setInterval(() => {
             setTimeLeft(prev => {
-                if (prev <= 1) { clearInterval(timer); submitRef.current(); return 0; }
+                if (prev <= 1) { clearInterval(timer); submitRef.current?.(); return 0; }
                 return prev - 1;
             });
         }, 1000);
         return () => clearInterval(timer);
     }, [isFinished, shuffledExam]);
 
-    // ── 5. Anti-cheat — tab / window visibility ───────────────────────────────
+    // ── 6. Anti-cheat ─────────────────────────────────────────────────────────
     useEffect(() => {
-        if (isFinished) return;
+        if (isFinished || allowTabSwitch) return;
         const handleVisibility = () => {
             if (document.hidden) {
                 setTabSwitchCount(prev => {
                     const next = prev + 1;
-                    if (next >= MAX_TAB_SWITCHES) {
-                        setWarningMessage(`You have switched tabs ${next} times. Your exam is being submitted automatically.`);
+                    if (next >= maxTabSwitches) {
+                        setWarningMessage(`You have switched tabs ${next} time(s). Your exam is being auto-submitted.`);
                         setShowWarning(true);
-                        setTimeout(() => submitRef.current(), 2500);
+                        setTimeout(() => submitRef.current?.(), 2500);
                     } else {
-                        setWarningMessage(`⚠ Warning ${next}/${MAX_TAB_SWITCHES}: Do not leave the exam window. Your exam will be auto-submitted after ${MAX_TAB_SWITCHES} violations.`);
+                        setWarningMessage(`⚠ Warning ${next}/${maxTabSwitches}: Do not leave this window. Auto-submit after ${maxTabSwitches} violations.`);
                         setShowWarning(true);
                     }
                     return next;
@@ -200,30 +238,23 @@ const TakeExam = ({ exam, setPage }) => {
         };
         document.addEventListener('visibilitychange', handleVisibility);
         return () => document.removeEventListener('visibilitychange', handleVisibility);
-    }, [isFinished]);
+    }, [isFinished, allowTabSwitch, maxTabSwitches]);
 
-    // ── 6. Answer selection ───────────────────────────────────────────────────
+    // ── 7. Answer selection ───────────────────────────────────────────────────
     const handleAnswerSelect = (answer) => {
         const next = [...answers];
         next[currentQuestionIndex] = answer;
         setAnswers(next);
     };
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // RENDER: loading
+    // ── Render ────────────────────────────────────────────────────────────────
     if (!shuffledExam) return <div className="flex justify-center items-center h-64"><Spinner /></div>;
 
-    // RENDER: results screen
     if (isFinished && result) {
         return <ResultsScreen result={result} exam={exam} onBack={() => setPage('dashboard')} />;
     }
     if (isFinished) {
-        return (
-            <div className="text-center p-8 bg-white rounded-lg shadow-md">
-                <h2 className="text-2xl font-bold text-gray-800 mb-2">Submitting…</h2>
-                <Spinner />
-            </div>
-        );
+        return <div className="text-center p-8 bg-white rounded-lg shadow-md"><h2 className="text-2xl font-bold text-gray-800 mb-2">Submitting…</h2><Spinner /></div>;
     }
 
     const currentQuestion = shuffledExam.questions[currentQuestionIndex];
@@ -233,8 +264,6 @@ const TakeExam = ({ exam, setPage }) => {
 
     return (
         <div className="bg-white p-6 md:p-8 rounded-lg shadow-md max-w-4xl mx-auto">
-
-            {/* ── Anti-cheat warning banner ── */}
             {showWarning && (
                 <div className="mb-4 bg-red-100 border border-red-400 text-red-800 px-4 py-3 rounded-lg flex items-start gap-3">
                     <AlertTriangle size={20} className="shrink-0 mt-0.5" />
@@ -243,20 +272,22 @@ const TakeExam = ({ exam, setPage }) => {
                 </div>
             )}
 
-            {/* ── Header ── */}
             <div className="flex justify-between items-center mb-5 border-b pb-4 gap-4">
                 <div className="min-w-0">
                     <h2 className="text-xl font-bold text-gray-800 truncate">{shuffledExam.title}</h2>
                     <p className="text-xs text-gray-400 mt-0.5">
                         {answeredCount} / {shuffledExam.questions.length} answered
-                        {tabSwitchCount > 0 && <span className="ml-3 text-red-500">⚠ {tabSwitchCount} tab switch{tabSwitchCount > 1 ? 'es' : ''}</span>}
+                        {!allowTabSwitch && tabSwitchCount > 0 && (
+                            <span className="ml-3 text-red-500">⚠ {tabSwitchCount} tab switch{tabSwitchCount > 1 ? 'es' : ''}</span>
+                        )}
                     </p>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
-                    <div className={`text-xl font-bold px-3 py-1.5 rounded-lg tabular-nums ${
+                    <div className={`text-xl font-bold px-3 py-1.5 rounded-lg tabular-nums flex items-center gap-1 ${
                         timeLeft < 300 ? 'text-red-600 bg-red-100 animate-pulse' :
                         timeLeft < 600 ? 'text-yellow-600 bg-yellow-100' : 'text-gray-700 bg-gray-100'
                     }`}>
+                        <Clock size={16} />
                         {String(minutes).padStart(2,'0')}:{String(seconds).padStart(2,'0')}
                     </div>
                     <button onClick={() => setIsSubmitModalOpen(true)} className="px-4 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 text-sm">
@@ -265,7 +296,6 @@ const TakeExam = ({ exam, setPage }) => {
                 </div>
             </div>
 
-            {/* ── Question ── */}
             <div className="mb-6">
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">
                     Question {currentQuestionIndex + 1} of {shuffledExam.questions.length}
@@ -274,7 +304,6 @@ const TakeExam = ({ exam, setPage }) => {
                 <p className="text-lg text-gray-800 font-medium">{currentQuestion.text}</p>
             </div>
 
-            {/* ── Answers ── */}
             <div className="space-y-3 min-h-[160px]">
                 {currentQuestion.type === 'multiple-choice' && currentQuestion.options.map((opt, i) => (
                     <button key={i} onClick={() => handleAnswerSelect(i)}
@@ -308,7 +337,6 @@ const TakeExam = ({ exam, setPage }) => {
                 )}
             </div>
 
-            {/* ── Navigation ── */}
             <div className="mt-8 pt-5 border-t">
                 <div className="flex justify-between items-center mb-4">
                     <button onClick={() => setCurrentQuestionIndex(p => Math.max(0, p - 1))}
@@ -322,15 +350,13 @@ const TakeExam = ({ exam, setPage }) => {
                         Next <ChevronRight size={16} />
                     </button>
                 </div>
-
-                {/* Question palette */}
                 <div className="flex flex-wrap gap-2 justify-center">
                     {shuffledExam.questions.map((_, i) => (
                         <button key={i} onClick={() => setCurrentQuestionIndex(i)}
                             className={`w-9 h-9 rounded-md text-xs font-bold transition-all ${
                                 currentQuestionIndex === i ? 'ring-2 ring-blue-500 ring-offset-1 bg-blue-600 text-white' :
-                                answers[i] !== null            ? 'bg-green-500 text-white' :
-                                                                 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                                answers[i] !== null ? 'bg-green-500 text-white' :
+                                'bg-gray-200 text-gray-600 hover:bg-gray-300'
                             }`}>
                             {i + 1}
                         </button>
@@ -343,12 +369,11 @@ const TakeExam = ({ exam, setPage }) => {
                 </p>
             </div>
 
-            {/* ── Submit confirmation modal ── */}
             <Modal isOpen={isSubmitModalOpen} onClose={() => setIsSubmitModalOpen(false)} title="Confirm Submission">
                 <p className="text-gray-700">
                     You have answered <strong>{answeredCount}</strong> of <strong>{shuffledExam.questions.length}</strong> questions.
                     {answeredCount < shuffledExam.questions.length && (
-                        <span className="block mt-2 text-yellow-600 text-sm">⚠ {shuffledExam.questions.length - answeredCount} question(s) are still unanswered.</span>
+                        <span className="block mt-2 text-yellow-600 text-sm">⚠ {shuffledExam.questions.length - answeredCount} question(s) unanswered.</span>
                     )}
                 </p>
                 <p className="text-sm text-gray-500 mt-2">This action cannot be undone.</p>
@@ -361,68 +386,69 @@ const TakeExam = ({ exam, setPage }) => {
     );
 };
 
-// ── Results Screen ────────────────────────────────────────────────────────────
+// ── Results Screen ─────────────────────────────────────────────────────────────
 const ResultsScreen = ({ result, exam, onBack }) => {
     const { score, totalMarks, pct, passed, breakdown } = result;
-    const passMark = exam.passMarkPercentage || 50;
+    const passMark       = exam.passMarkPercentage || 50;
+    const showScore      = exam.showScoreImmediately !== false; // default true
 
     return (
         <div className="max-w-3xl mx-auto space-y-6 pb-10">
-            {/* Score card */}
             <div className={`bg-white rounded-xl shadow-md p-8 text-center border-t-4 ${passed ? 'border-green-500' : 'border-red-500'}`}>
-                {passed
-                    ? <CheckCircle size={56} className="text-green-500 mx-auto mb-3" />
-                    : <XCircle    size={56} className="text-red-500 mx-auto mb-3" />
-                }
-                <h2 className="text-3xl font-bold text-gray-800">{passed ? 'Congratulations!' : 'Better luck next time'}</h2>
+                {passed ? <CheckCircle size={56} className="text-green-500 mx-auto mb-3" /> : <XCircle size={56} className="text-red-500 mx-auto mb-3" />}
+                <h2 className="text-3xl font-bold text-gray-800">{passed ? 'Well done!' : 'Better luck next time'}</h2>
                 <p className="text-gray-500 mt-1">{exam.title}</p>
-                <div className="mt-6 flex justify-center gap-8">
-                    <div>
-                        <p className="text-4xl font-bold text-gray-800">{score}<span className="text-xl text-gray-400">/{totalMarks}</span></p>
-                        <p className="text-sm text-gray-500 mt-1">Score</p>
+
+                {showScore ? (
+                    <div className="mt-6 flex justify-center gap-8">
+                        <div>
+                            <p className="text-4xl font-bold text-gray-800">{score}<span className="text-xl text-gray-400">/{totalMarks}</span></p>
+                            <p className="text-sm text-gray-500 mt-1">Score</p>
+                        </div>
+                        <div>
+                            <p className={`text-4xl font-bold ${passed ? 'text-green-600' : 'text-red-500'}`}>{pct}%</p>
+                            <p className="text-sm text-gray-500 mt-1">Percentage</p>
+                        </div>
+                        <div>
+                            <p className="text-4xl font-bold text-gray-800">{passMark}%</p>
+                            <p className="text-sm text-gray-500 mt-1">Pass Mark</p>
+                        </div>
                     </div>
-                    <div>
-                        <p className={`text-4xl font-bold ${passed ? 'text-green-600' : 'text-red-500'}`}>{pct}%</p>
-                        <p className="text-sm text-gray-500 mt-1">Percentage</p>
-                    </div>
-                    <div>
-                        <p className="text-4xl font-bold text-gray-800">{passMark}%</p>
-                        <p className="text-sm text-gray-500 mt-1">Pass Mark</p>
-                    </div>
-                </div>
+                ) : (
+                    <p className="mt-6 text-gray-500 text-sm">Your score will be released by your teacher.</p>
+                )}
+
                 <div className={`inline-block mt-4 px-4 py-1.5 rounded-full text-sm font-bold ${passed ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                     {passed ? 'PASSED' : 'FAILED'}
                 </div>
             </div>
 
-            {/* Per-question breakdown */}
-            <div className="bg-white rounded-xl shadow-md p-6">
-                <h3 className="text-lg font-bold text-gray-800 mb-4">Question Breakdown</h3>
-                <div className="space-y-3">
-                    {breakdown.map((item, i) => (
-                        <div key={i} className={`p-4 rounded-lg border ${item.isCorrect ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}>
-                            <div className="flex justify-between items-start gap-3">
-                                <div className="flex items-start gap-2 min-w-0">
-                                    {item.isCorrect
-                                        ? <CheckCircle size={16} className="text-green-600 shrink-0 mt-0.5" />
-                                        : <XCircle    size={16} className="text-red-500 shrink-0 mt-0.5" />
-                                    }
-                                    <p className="text-sm text-gray-800 font-medium">{i + 1}. {item.question}</p>
+            {showScore && (
+                <div className="bg-white rounded-xl shadow-md p-6">
+                    <h3 className="text-lg font-bold text-gray-800 mb-4">Question Breakdown</h3>
+                    <div className="space-y-3">
+                        {breakdown.map((item, i) => (
+                            <div key={i} className={`p-4 rounded-lg border ${item.isCorrect ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}>
+                                <div className="flex justify-between items-start gap-3">
+                                    <div className="flex items-start gap-2 min-w-0">
+                                        {item.isCorrect ? <CheckCircle size={16} className="text-green-600 shrink-0 mt-0.5" /> : <XCircle size={16} className="text-red-500 shrink-0 mt-0.5" />}
+                                        <p className="text-sm text-gray-800 font-medium">{i + 1}. {item.question}</p>
+                                    </div>
+                                    <span className={`text-xs font-bold shrink-0 ${item.isCorrect ? 'text-green-600' : 'text-red-500'}`}>
+                                        {item.isCorrect ? `+${item.marks}` : '0'}/{item.marks}
+                                    </span>
                                 </div>
-                                <span className={`text-xs font-bold shrink-0 ${item.isCorrect ? 'text-green-600' : 'text-red-500'}`}>
-                                    {item.isCorrect ? `+${item.marks}` : '0'}/{item.marks}
-                                </span>
+                                {!item.isCorrect && (
+                                    <div className="mt-2 ml-6 text-xs space-y-0.5">
+                                        <p className="text-red-600">Your answer: <span className="font-medium">{item.givenText !== undefined ? String(item.givenText) : (item.given !== null ? String(item.given) : 'Not answered')}</span></p>
+                                        <p className="text-green-700">Correct answer: <span className="font-medium">{String(item.correctAnswer)}</span></p>
+                                    </div>
+                                )}
                             </div>
-                            {!item.isCorrect && (
-                                <div className="mt-2 ml-6 text-xs space-y-0.5">
-                                    <p className="text-red-600">Your answer: <span className="font-medium">{item.givenText !== undefined ? String(item.givenText) : (item.given !== null ? String(item.given) : 'Not answered')}</span></p>
-                                    <p className="text-green-700">Correct answer: <span className="font-medium">{String(item.correctAnswer)}</span></p>
-                                </div>
-                            )}
-                        </div>
-                    ))}
+                        ))}
+                    </div>
                 </div>
-            </div>
+            )}
 
             <button onClick={onBack} className="w-full py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition">
                 Back to Dashboard
